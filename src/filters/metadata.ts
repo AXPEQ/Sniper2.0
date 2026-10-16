@@ -54,6 +54,11 @@ export function parseMetadata(json: Record<string, unknown>): TokenMetadata {
   };
 }
 
+/** Ссылка на X/Twitter (профиль, пост или community). */
+export function isTwitterUrl(url: string): boolean {
+  return /^(https?:\/\/)?(www\.|mobile\.)?(x|twitter)\.com\/[A-Za-z0-9_]+/i.test(url.trim());
+}
+
 export function hasSocials(meta: TokenMetadata): boolean {
   return Boolean(meta.twitter || meta.telegram || meta.website);
 }

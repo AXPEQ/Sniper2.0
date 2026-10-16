@@ -8,8 +8,9 @@ import {
   type BondingCurveState,
 } from '../pump/bondingCurve.js';
 import type { CreateEvent } from '../pump/events.js';
-import { withRetry } from '../utils.js';
-import { fetchMetadata, hasSocials } from './metadata.js';
+import { checkActivity, type ActivityStats } from '../activity.js';
+import { lamportsToSol, withRetry } from '../utils.js';
+import { fetchMetadata, hasSocials, isTwitterUrl, type TokenMetadata } from './metadata.js';
 
 export interface DeepCheckResult {
   reason?: string;
@@ -51,12 +52,25 @@ export class TokenFilter {
     return null;
   }
 
+  /** Нужно ли грузить метаданные при текущих настройках. */
+  get needsMetadata(): boolean {
+    return this.cfg.requireSocials || this.cfg.requireTwitter || this.cfg.requireImage;
+  }
+
+  /** Загрузка метаданных; можно начать сразу при обнаружении токена, пока идёт окно наблюдения. */
+  fetchMetadata(ev: CreateEvent): Promise<TokenMetadata | Error | null> {
+    if (!this.needsMetadata) return Promise.resolve(null);
+    return fetchMetadata(ev.uri, this.cfg.metadataTimeoutMs, this.cfg.ipfsGateways).catch((err: Error) => err);
+  }
+
   /** Проверки с запросами к RPC и метаданным. Любая ошибка = отказ (fail-closed). */
-  async deepCheck(ev: CreateEvent): Promise<DeepCheckResult> {
-    const [meta, mintInfo, curve, devTokens] = await Promise.all([
-      this.cfg.requireSocials
-        ? fetchMetadata(ev.uri, this.cfg.metadataTimeoutMs, this.cfg.ipfsGateways).catch((err: Error) => err)
-        : Promise.resolve(null),
+  async deepCheck(
+    ev: CreateEvent,
+    activity: ActivityStats | null = null,
+    metadata: Promise<TokenMetadata | Error | null> = this.fetchMetadata(ev),
+  ): Promise<DeepCheckResult> {
+    const [meta, mintInfo, curve, devTokens, devSol] = await Promise.all([
+      metadata,
       withRetry(() => this.connection.getParsedAccountInfo(ev.mint)),
       withRetry(async () => {
         const acc = await this.connection.getAccountInfo(ev.bondingCurve);
@@ -64,10 +78,14 @@ export class TokenFilter {
         return decodeBondingCurve(acc.data);
       }),
       this.devHoldings(ev),
+      this.cfg.minDevSolBalance > 0 ? withRetry(() => this.connection.getBalance(ev.user)) : Promise.resolve(0),
     ]);
 
     if (meta instanceof Error) return { reason: `метаданные недоступны: ${meta.message}` };
-    if (meta && !hasSocials(meta)) return { reason: 'нет соцсетей в метаданных' };
+    if (meta) {
+      const metaReason = checkMetadata(meta, this.cfg);
+      if (metaReason) return { reason: metaReason };
+    }
 
     const mintReason = checkMint(mintInfo.value);
     if (mintReason) return { reason: mintReason };
@@ -79,12 +97,23 @@ export class TokenFilter {
       return { reason: `mcap ${mcap.toFixed(1)} SOL > MAX_MARKET_CAP_SOL` };
     }
 
+    if (activity) {
+      const currentPrice = Number(curve.virtualSolReserves) / Number(curve.virtualTokenReserves);
+      const activityReason = checkActivity(activity, currentPrice, this.cfg);
+      if (activityReason) return { reason: activityReason };
+    }
+
+    if (this.cfg.minDevSolBalance > 0 && lamportsToSol(devSol) < this.cfg.minDevSolBalance) {
+      return { reason: `у разработчика ${lamportsToSol(devSol).toFixed(3)} SOL (< ${this.cfg.minDevSolBalance})` };
+    }
+
     const supply = curve.tokenTotalSupply;
     if (this.cfg.maxDevHoldingPct > 0 && supply > 0n) {
       const devPct = pct(devTokens, supply);
       if (devPct > this.cfg.maxDevHoldingPct) return { reason: `dev держит ${devPct.toFixed(1)}%` };
     }
 
+    // Самый тяжёлый запрос — последним, только для токенов, прошедших всё остальное.
     if (this.cfg.maxTop10HoldingPct > 0 && supply > 0n) {
       const tokenProgram = ev.tokenProgram ?? mintInfo.value?.owner ?? TOKEN_PROGRAM_ID;
       const curveAta = deriveAssociatedTokenAddress(ev.bondingCurve, ev.mint, tokenProgram);
@@ -128,6 +157,16 @@ export class TokenFilter {
 export async function tokenBalance(connection: Connection, owner: PublicKey, mint: PublicKey): Promise<bigint> {
   const res = await withRetry(() => connection.getParsedTokenAccountsByOwner(owner, { mint }));
   return res.value.reduce((sum, acc) => sum + BigInt(acc.account.data.parsed.info.tokenAmount.amount as string), 0n);
+}
+
+export function checkMetadata(
+  meta: TokenMetadata,
+  rules: Pick<Config, 'requireSocials' | 'requireTwitter' | 'requireImage'>,
+): string | null {
+  if (rules.requireSocials && !hasSocials(meta)) return 'нет соцсетей в метаданных';
+  if (rules.requireTwitter && !(meta.twitter && isTwitterUrl(meta.twitter))) return 'нет ссылки на X/Twitter';
+  if (rules.requireImage && !meta.image) return 'нет картинки в метаданных';
+  return null;
 }
 
 type ParsedMintAccount = Awaited<ReturnType<Connection['getParsedAccountInfo']>>['value'];

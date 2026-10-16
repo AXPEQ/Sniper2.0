@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { loadConfig } from '../src/config.js';
+import { loadConfig, redactUrl } from '../src/config.js';
 
 describe('loadConfig', () => {
   it('defaults to dry run', () => {
@@ -17,4 +17,21 @@ describe('loadConfig', () => {
   it('parses lists', () => {
     expect(loadConfig({ NAME_BLACKLIST: ' Rug , SCAM,,' }).nameBlacklist).toEqual(['rug', 'scam']);
   });
+  it('uses the strict preset by default and allows overrides', () => {
+    const cfg = loadConfig({});
+    expect(cfg.filterPreset).toBe('strict');
+    expect(cfg.buyDelayMs).toBe(6000);
+    expect(cfg.minUniqueBuyers).toBe(8);
+    expect(loadConfig({ MIN_UNIQUE_BUYERS: '20' }).minUniqueBuyers).toBe(20);
+    expect(loadConfig({ FILTER_PRESET: 'normal' }).buyDelayMs).toBe(0);
+    expect(() => loadConfig({ FILTER_PRESET: 'yolo' })).toThrow('FILTER_PRESET');
+  });
+  it('builds Helius urls from HELIUS_API_KEY and redacts them', () => {
+    const cfg = loadConfig({ HELIUS_API_KEY: 'k123' });
+    expect(cfg.rpcUrl).toBe('https://mainnet.helius-rpc.com/?api-key=k123');
+    expect(cfg.wsUrl).toBe('wss://mainnet.helius-rpc.com/?api-key=k123');
+    expect(redactUrl(cfg.rpcUrl)).toBe('https://mainnet.helius-rpc.com/?api-key=***');
+    expect(loadConfig({ HELIUS_API_KEY: 'k', RPC_URL: 'https://my.rpc' }).rpcUrl).toBe('https://my.rpc');
+  });
 });
+

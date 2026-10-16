@@ -1,4 +1,5 @@
 import type { Connection, PublicKey } from '@solana/web3.js';
+import type { TradeTracker } from './activity.js';
 import type { Config } from './config.js';
 import type { TokenFilter } from './filters/index.js';
 import type { Journal } from './journal.js';
@@ -17,6 +18,8 @@ export class Sniper {
   private budgetWarned = false;
   private stopped = false;
   readonly stats = { seen: 0, quickRejected: 0, deepRejected: 0, dropped: 0, bought: 0, buyFailed: 0 };
+  /** Причины отказов (числа обезличены) — помогают подобрать пороги фильтров. */
+  readonly rejectReasons = new Map<string, number>();
 
   constructor(
     private readonly connection: Connection,
@@ -26,7 +29,22 @@ export class Sniper {
     private readonly positions: PositionManager,
     private readonly journal: Journal,
     private readonly wallet: PublicKey | null,
+    private readonly tracker: TradeTracker,
   ) {}
+
+  /** Топ причин отказа, например «мало покупателей: # < #» — 120. */
+  topRejectReasons(limit = 5): string {
+    return [...this.rejectReasons.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, limit)
+      .map(([r, n]) => `${r} — ${n}`)
+      .join('; ');
+  }
+
+  private countReject(reason: string): void {
+    const key = reason.replace(/-?\d+(\.\d+)?/g, '#');
+    this.rejectReasons.set(key, (this.rejectReasons.get(key) ?? 0) + 1);
+  }
 
   /** Прекратить новые покупки и дождаться завершения уже отправленных (не дольше timeoutMs). */
   async stop(timeoutMs = 30_000): Promise<void> {
@@ -44,6 +62,7 @@ export class Sniper {
     const quickReason = this.filter.quickCheck(event);
     if (quickReason) {
       this.stats.quickRejected++;
+      this.countReject(quickReason);
       log.debug(`пропуск ${label}: ${quickReason}`);
       return;
     }
@@ -58,21 +77,36 @@ export class Sniper {
     }
 
     this.inFlight++;
-    void this.process(token, label).finally(() => this.inFlight--);
+    if (this.cfg.buyDelayMs > 0) {
+      this.tracker.watch(event.mint, {
+        creationSignature: token.signature,
+        creationSlot: token.slot,
+        devs: event.creator ? [event.user, event.creator] : [event.user],
+        initialVSol: event.virtualSolReserves ?? 30_000_000_000n,
+        initialVTok: event.virtualTokenReserves ?? 1_073_000_000_000_000n,
+      });
+    }
+    void this.process(token, label).finally(() => {
+      this.inFlight--;
+      this.tracker.unwatch(event.mint);
+    });
   }
 
   private async process(token: NewToken, label: string): Promise<void> {
     const { event } = token;
+    // Метаданные грузим сразу, параллельно с окном наблюдения.
+    const metadata = this.filter.fetchMetadata(event);
     if (this.cfg.buyDelayMs > 0) await sleep(this.cfg.buyDelayMs);
 
     let check;
     try {
-      check = await this.filter.deepCheck(event);
+      check = await this.filter.deepCheck(event, this.tracker.stats(event.mint), metadata);
     } catch (err) {
       check = { reason: `ошибка проверки: ${errorMessage(err)}` };
     }
     if (check.reason || !check.curve) {
       this.stats.deepRejected++;
+      this.countReject(check.reason ?? 'нет данных кривой');
       log.info(`✗ ${label}: ${check.reason ?? 'нет данных кривой'}`);
       return;
     }
@@ -85,7 +119,9 @@ export class Sniper {
 
     const curve = check.curve;
     const latencyMs = Date.now() - token.detectedAt;
-    log.info(`✓ ${label}: фильтры пройдены за ${latencyMs}мс, mcap ${marketCapSol(curve).toFixed(1)} SOL — ПОКУПКА ${this.cfg.buyAmountSol} SOL`);
+    const a = this.tracker.stats(event.mint);
+    const activity = a ? `, покупателей ${a.uniqueBuyers}, объём ${a.buyVolumeSol.toFixed(2)} SOL` : '';
+    log.info(`✓ ${label}: фильтры пройдены за ${latencyMs}мс, mcap ${marketCapSol(curve).toFixed(1)} SOL${activity} — ПОКУПКА ${this.cfg.buyAmountSol} SOL`);
 
     this.pendingBuys++;
     try {
@@ -114,6 +150,7 @@ export class Sniper {
         tokenAmount: res.tokenAmount,
         marketCapSol: marketCapSol(curve),
         latencyMs,
+        activity: a ?? undefined,
       });
     } catch (err) {
       this.stats.buyFailed++;

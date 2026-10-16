@@ -16,7 +16,7 @@ export interface SellResult {
 }
 
 export interface Executor {
-  readonly mode: 'dry-run' | 'live';
+  readonly mode: 'paper' | 'live';
   buy(mint: PublicKey, solAmount: number, curve: BondingCurveState): Promise<BuyResult>;
   /** curve — последнее известное состояние кривой (null, если токен уже мигрировал и цены нет). */
   sell(mint: PublicKey, tokenAmount: bigint, curve: BondingCurveState | null): Promise<SellResult>;

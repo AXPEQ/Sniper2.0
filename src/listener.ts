@@ -1,20 +1,28 @@
 import type { Commitment, Connection } from '@solana/web3.js';
 import { PUMP_PROGRAM_ID } from './constants.js';
 import { log } from './logger.js';
-import { extractCreateEvents, type CreateEvent } from './pump/events.js';
+import { parseProgramEvents, type CreateEvent, type TradeEvent } from './pump/events.js';
 
 export interface NewToken {
   event: CreateEvent;
   signature: string;
+  slot: number;
   detectedAt: number;
+}
+
+export interface ListenerHandlers {
+  onToken: (token: NewToken) => void;
+  /** Сделки разбираются только по токенам, для которых isTradeWanted вернёт true. */
+  onTrade?: (trade: TradeEvent, signature: string, slot: number) => void;
+  isTradeWanted?: (mint: string) => boolean;
 }
 
 /** Через сколько мс тишины считаем подписку мёртвой (программа pump.fun активна каждую секунду). */
 const SILENCE_TIMEOUT_MS = 30_000;
 
 /**
- * Слушает логи программы pump.fun через WebSocket (logsSubscribe) и
- * отдаёт каждый новый токен ровно один раз.
+ * Слушает логи программы pump.fun через WebSocket (logsSubscribe):
+ * отдаёт каждый новый токен ровно один раз и сделки по токенам на наблюдении.
  */
 export class TokenListener {
   private subscriptionId: number | null = null;
@@ -25,7 +33,7 @@ export class TokenListener {
   constructor(
     private readonly connection: Connection,
     private readonly commitment: Commitment,
-    private readonly onToken: (token: NewToken) => void,
+    private readonly handlers: ListenerHandlers,
   ) {}
 
   start(): void {
@@ -48,14 +56,19 @@ export class TokenListener {
     this.lastMessageAt = Date.now();
     this.subscriptionId = this.connection.onLogs(
       PUMP_PROGRAM_ID,
-      (result) => {
+      (result, ctx) => {
         this.lastMessageAt = Date.now();
         if (result.err) return;
-        for (const event of extractCreateEvents(result.logs)) {
-          const mint = event.mint.toBase58();
+        const wantTrade = this.handlers.onTrade ? (this.handlers.isTradeWanted ?? (() => true)) : () => false;
+        for (const item of parseProgramEvents(result.logs, wantTrade)) {
+          if (item.kind === 'trade') {
+            this.handlers.onTrade?.(item.event, result.signature, ctx.slot);
+            continue;
+          }
+          const mint = item.event.mint.toBase58();
           if (this.seenMints.has(mint)) continue;
           this.rememberMint(mint);
-          this.onToken({ event, signature: result.signature, detectedAt: Date.now() });
+          this.handlers.onToken({ event: item.event, signature: result.signature, slot: ctx.slot, detectedAt: Date.now() });
         }
       },
       this.commitment,

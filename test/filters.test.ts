@@ -1,8 +1,8 @@
 import { Connection, Keypair } from '@solana/web3.js';
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
-import { checkMint, TokenFilter } from '../src/filters/index.js';
-import { metadataUrls, parseMetadata } from '../src/filters/metadata.js';
+import { checkMetadata, checkMint, TokenFilter } from '../src/filters/index.js';
+import { isTwitterUrl, metadataUrls, parseMetadata } from '../src/filters/metadata.js';
 import type { CreateEvent } from '../src/pump/events.js';
 
 const event = (name: string, symbol: string, extra: Partial<CreateEvent> = {}): CreateEvent => ({
@@ -86,5 +86,23 @@ describe('parseMetadata', () => {
     expect(parseMetadata({ twitter: ' https://x.com/a ' }).twitter).toBe('https://x.com/a');
     expect(parseMetadata({ extensions: { telegram: 't.me/a' } }).telegram).toBe('t.me/a');
     expect(parseMetadata({ twitter: '' }).twitter).toBeUndefined();
+  });
+});
+
+describe('checkMetadata', () => {
+  const strict = { requireSocials: true, requireTwitter: true, requireImage: true };
+  it('accepts full metadata', () => {
+    expect(checkMetadata({ twitter: 'https://x.com/coin', image: 'https://img' }, strict)).toBeNull();
+  });
+  it('requires a real X/Twitter link and an image in strict mode', () => {
+    expect(checkMetadata({ telegram: 't.me/a', image: 'i' }, strict)).toContain('X/Twitter');
+    expect(checkMetadata({ twitter: 'https://example.com/x', image: 'i' }, strict)).toContain('X/Twitter');
+    expect(checkMetadata({ twitter: 'https://x.com/a' }, strict)).toContain('картинки');
+    expect(checkMetadata({}, strict)).toContain('соцсетей');
+  });
+  it('recognises twitter url variants', () => {
+    expect(isTwitterUrl('https://twitter.com/abc/status/1')).toBe(true);
+    expect(isTwitterUrl('x.com/abc')).toBe(true);
+    expect(isTwitterUrl('https://x.com/')).toBe(false);
   });
 });

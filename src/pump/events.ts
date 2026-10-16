@@ -93,13 +93,73 @@ export function decodeCreateEvent(data: Buffer): CreateEvent | null {
   }
 }
 
-/** Достаёт все CreateEvent из логов транзакции. */
-export function extractCreateEvents(logs: readonly string[]): CreateEvent[] {
-  const events: CreateEvent[] = [];
+/** Событие сделки на bonding curve (TradeEvent). Читаем только нужные боту поля. */
+export interface TradeEvent {
+  mint: PublicKey;
+  solAmount: bigint;
+  tokenAmount: bigint;
+  isBuy: boolean;
+  user: PublicKey;
+  timestamp: number;
+  /** Резервы кривой ПОСЛЕ сделки. */
+  virtualSolReserves: bigint;
+  virtualTokenReserves: bigint;
+}
+
+export const TRADE_EVENT_DISCRIMINATOR = anchorEventDiscriminator('TradeEvent');
+
+export function decodeTradeEvent(data: Buffer): TradeEvent | null {
+  if (data.length < 8 || !data.subarray(0, 8).equals(TRADE_EVENT_DISCRIMINATOR)) return null;
+  const r = new Reader(data.subarray(8));
+  try {
+    return {
+      mint: r.pubkey(),
+      solAmount: r.u64(),
+      tokenAmount: r.u64(),
+      isBuy: r.bool(),
+      user: r.pubkey(),
+      timestamp: Number(r.i64()),
+      virtualSolReserves: r.u64(),
+      virtualTokenReserves: r.u64(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export type ProgramEvent = { kind: 'create'; event: CreateEvent } | { kind: 'trade'; event: TradeEvent };
+
+/**
+ * Достаёт события pump.fun из логов транзакции в порядке появления.
+ * isTradeWanted(mintBase58) позволяет не разбирать сделки по неинтересным токенам
+ * (их десятки в секунду): mint читается прямо из байтов до полного разбора.
+ * Сделки по токенам, созданным в этой же транзакции (dev-покупка), отдаются всегда.
+ */
+export function parseProgramEvents(logs: readonly string[], isTradeWanted: (mint: string) => boolean = () => true): ProgramEvent[] {
+  const out: ProgramEvent[] = [];
+  const createdHere = new Set<string>();
   for (const line of logs) {
     if (!line.startsWith(PROGRAM_DATA_PREFIX)) continue;
-    const ev = decodeCreateEvent(Buffer.from(line.slice(PROGRAM_DATA_PREFIX.length), 'base64'));
-    if (ev) events.push(ev);
+    const data = Buffer.from(line.slice(PROGRAM_DATA_PREFIX.length), 'base64');
+    if (data.length < 8) continue;
+    const disc = data.subarray(0, 8);
+    if (disc.equals(CREATE_EVENT_DISCRIMINATOR)) {
+      const event = decodeCreateEvent(data);
+      if (event) {
+        out.push({ kind: 'create', event });
+        createdHere.add(event.mint.toBase58());
+      }
+    } else if (disc.equals(TRADE_EVENT_DISCRIMINATOR) && data.length >= 40) {
+      const mint = new PublicKey(data.subarray(8, 40)).toBase58();
+      if (!createdHere.has(mint) && !isTradeWanted(mint)) continue;
+      const event = decodeTradeEvent(data);
+      if (event) out.push({ kind: 'trade', event });
+    }
   }
-  return events;
+  return out;
+}
+
+/** Достаёт все CreateEvent из логов транзакции. */
+export function extractCreateEvents(logs: readonly string[]): CreateEvent[] {
+  return parseProgramEvents(logs, () => false).flatMap((e) => (e.kind === 'create' ? [e.event] : []));
 }
