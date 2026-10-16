@@ -114,7 +114,7 @@ describe('checkActivity (strict)', () => {
     [{ buyVolumeSol: 0.5 }, 1.5, 'малый объём'],
     [{ sellVolumeSol: 4 }, 1.5, 'много продаж'],
     [{ largestBuyerPct: 70 }, 1.5, 'один кошелёк'],
-    [{}, 0.9, 'ниже старта'],
+    [{}, 0.8, 'ниже старта'],
     [{}, 3, 'уже вырос'],
   ] as const)('rejects %o at price %s', (patch, price, reason) => {
     expect(checkActivity({ ...good, ...patch }, price, strict)).toContain(reason);

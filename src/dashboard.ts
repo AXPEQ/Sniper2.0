@@ -161,7 +161,15 @@ export function renderSummary(ctx: DashboardContext, leftOpen: number): string {
   const dot = c.gray(' · ');
   const rows = [`👀 новых токенов ${c.bold(s.seen)}${dot}🛒 куплено ${c.bold(s.bought)}`, tradesLine(ctx)];
   if (paperWallet) rows.push(walletLine(paperWallet, positions));
-  if (leftOpen > 0) rows.push(c.yellow(`⚠️  не проданы ${leftOpen} позиций (включи SELL_ON_EXIT=true, чтобы продавать при остановке)`));
+  if (leftOpen > 0) {
+    rows.push(
+      c.yellow(
+        ctx.cfg.sellOnExit
+          ? `⚠️  не удалось продать ${leftOpen} позиций при остановке — проверь их вручную`
+          : `⚠️  не проданы ${leftOpen} позиций (включи SELL_ON_EXIT=true, чтобы продавать при остановке)`,
+      ),
+    );
+  }
   const reasons = sniper.topRejectReasons(6);
   if (reasons) rows.push(`🔍 чаще всего отсеивали: ${reasons}`);
   rows.push(rpcLine(ctx));

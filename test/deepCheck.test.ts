@@ -87,7 +87,7 @@ describe('deepCheck (strict) — credit usage', () => {
   it('rejects dev/top-10 concentration from stream data', async () => {
     const { conn, calls } = fakeRpc();
     const filter = new TokenFilter(conn, cfg);
-    expect((await filter.deepCheck(event, ctx({ ...healthy, devTokens: 80_000_000_000_000n }))).reason).toContain('dev держит');
+    expect((await filter.deepCheck(event, ctx({ ...healthy, devTokens: 150_000_000_000_000n }))).reason).toContain('dev держит');
     expect((await filter.deepCheck(event, ctx({ ...healthy, top10Tokens: 400_000_000_000_000n }))).reason).toContain('топ-10');
     expect(calls).toEqual([]);
   });

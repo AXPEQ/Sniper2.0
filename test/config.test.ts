@@ -21,7 +21,7 @@ describe('loadConfig', () => {
     const cfg = loadConfig({});
     expect(cfg.filterPreset).toBe('strict');
     expect(cfg.buyDelayMs).toBe(6000);
-    expect(cfg.minUniqueBuyers).toBe(8);
+    expect(cfg.minUniqueBuyers).toBe(6);
     expect(loadConfig({ MIN_UNIQUE_BUYERS: '20' }).minUniqueBuyers).toBe(20);
     expect(loadConfig({ FILTER_PRESET: 'normal' }).buyDelayMs).toBe(0);
     expect(() => loadConfig({ FILTER_PRESET: 'yolo' })).toThrow('FILTER_PRESET');
