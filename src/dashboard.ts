@@ -1,4 +1,5 @@
 import type { Config } from './config.js';
+import { wsStats } from './logger.js';
 import { redactUrl } from './config.js';
 import type { PositionManager } from './positions.js';
 import type { Sniper } from './sniper.js';
@@ -36,7 +37,8 @@ function rpcLine(ctx: DashboardContext): string {
     .join(', ');
   return c.gray(
     `📡 ${who}: ${ctx.rpcStats.calls} запросов (≈ кредитов) · ≈ ${Math.round(perHour)}/час · ≈ ${Math.round(perHour * 24).toLocaleString('ru-RU')}/сутки` +
-      (top ? ` · ${top}` : ''),
+      (top ? ` · ${top}` : '') +
+      (wsStats.drops > 0 ? ` · обрывов WebSocket ${wsStats.drops} (переподключался сам)` : ''),
   );
 }
 

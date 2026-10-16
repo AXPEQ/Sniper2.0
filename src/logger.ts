@@ -6,6 +6,10 @@ const ORDER: Record<Level, number> = { debug: 10, info: 20, warn: 30, error: 40 
 
 let minLevel: Level = 'info';
 
+// Свои ссылки на консоль: console.error ниже подменяется, чтобы перехватывать сообщения web3.js.
+const stdout = console.log.bind(console);
+const stderr = console.error.bind(console);
+
 export function setLogLevel(level: string): void {
   if (level in ORDER) minLevel = level as Level;
 }
@@ -28,7 +32,7 @@ function write(level: Level, msg: string, extra?: unknown): void {
   const ts = new Date().toTimeString().slice(0, 8);
   const tail = extra === undefined ? '' : ' ' + (extra instanceof Error ? extra.message : JSON.stringify(extra));
   const line = `${c.gray(ts)}  ${format(level, msg + tail)}`;
-  (level === 'error' || level === 'warn' ? console.error : console.log)(line);
+  (level === 'error' || level === 'warn' ? stderr : stdout)(line);
 }
 
 export const log = {
@@ -37,3 +41,25 @@ export const log = {
   warn: (msg: string, extra?: unknown) => write('warn', msg, extra),
   error: (msg: string, extra?: unknown) => write('error', msg, extra),
 };
+
+/** Сколько раз обрывалось WebSocket-соединение (показывается в статусе). */
+export const wsStats = { drops: 0 };
+
+/**
+ * web3.js печатает обрывы WebSocket как «ws error: ...» и сам переподключается с восстановлением подписок.
+ * Заменяем сырое сообщение на понятное и не спамим им чаще раза в 30 секунд.
+ */
+export function installWsErrorHandler(): void {
+  let lastShown = 0;
+  console.error = (...args: unknown[]) => {
+    if (args[0] === 'ws error:') {
+      wsStats.drops++;
+      if (Date.now() - lastShown > 30_000) {
+        lastShown = Date.now();
+        write('warn', 'связь с WebSocket оборвалась — переподключаюсь автоматически, подписки восстановятся');
+      }
+      return;
+    }
+    stderr(...args);
+  };
+}

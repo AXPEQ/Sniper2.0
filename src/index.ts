@@ -7,7 +7,7 @@ import { renderBanner, renderStatus, renderSummary, type DashboardContext } from
 import { TokenFilter } from './filters/index.js';
 import { Journal } from './journal.js';
 import { TokenListener } from './listener.js';
-import { log, setLogLevel } from './logger.js';
+import { installWsErrorHandler, log, setLogLevel } from './logger.js';
 import { PositionManager } from './positions.js';
 import { Sniper } from './sniper.js';
 import { PaperExecutor, PaperWallet } from './trader/paper.js';
@@ -19,6 +19,7 @@ import { errorMessage, lamportsToSol } from './utils.js';
 async function main(): Promise<void> {
   const cfg = loadConfig();
   setLogLevel(cfg.logLevel);
+  installWsErrorHandler();
 
   // HTTP-запросы идут в RPC_URL/Helius (по 1 кредиту), подписки — в STREAM_WS_URL (по умолчанию бесплатный публичный).
   const rpcStats = { calls: 0, byMethod: new Map<string, number>() };
