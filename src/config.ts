@@ -62,7 +62,8 @@ export interface Config {
   minUniqueBuyers: number;
   minBuyVolumeSol: number;
   maxSellRatio: number;
-  rejectDevSell: boolean;
+  /** Отказ, если разработчик продал больше этой доли купленного, %. 100 — не проверять. */
+  maxDevSoldPct: number;
   maxSingleBuyerPct: number;
   /** Макс. покупателей в одном слоте с созданием (бандл/инсайдеры). -1 — не проверять. */
   maxBundledBuyers: number;
@@ -94,7 +95,7 @@ const PRESETS: Record<FilterPreset, Record<string, number | boolean>> = {
     MIN_UNIQUE_BUYERS: 0,
     MIN_BUY_VOLUME_SOL: 0,
     MAX_SELL_RATIO: 0,
-    REJECT_DEV_SELL: false,
+    MAX_DEV_SOLD_PCT: 100,
     MAX_SINGLE_BUYER_PCT: 0,
     MAX_BUNDLED_BUYERS: -1,
     MIN_PRICE_CHANGE_PCT: -100,
@@ -105,14 +106,14 @@ const PRESETS: Record<FilterPreset, Record<string, number | boolean>> = {
     REQUIRE_TWITTER: true,
     REQUIRE_IMAGE: true,
     MIN_MARKET_CAP_SOL: 25,
-    MAX_MARKET_CAP_SOL: 70,
+    MAX_MARKET_CAP_SOL: 80,
     MAX_DEV_HOLDING_PCT: 5,
     MAX_TOP10_HOLDING_PCT: 30,
     MIN_DEV_SOL_BALANCE: 0.1,
     MIN_UNIQUE_BUYERS: 8,
     MIN_BUY_VOLUME_SOL: 2,
-    MAX_SELL_RATIO: 0.5,
-    REJECT_DEV_SELL: true,
+    MAX_SELL_RATIO: 0.6,
+    MAX_DEV_SOLD_PCT: 50,
     MAX_SINGLE_BUYER_PCT: 35,
     MAX_BUNDLED_BUYERS: 3,
     MIN_PRICE_CHANGE_PCT: 0,
@@ -216,7 +217,7 @@ export function loadConfig(env: Env = process.env): Config {
     minUniqueBuyers: pnum('MIN_UNIQUE_BUYERS'),
     minBuyVolumeSol: pnum('MIN_BUY_VOLUME_SOL'),
     maxSellRatio: pnum('MAX_SELL_RATIO'),
-    rejectDevSell: pbool('REJECT_DEV_SELL'),
+    maxDevSoldPct: pnum('MAX_DEV_SOLD_PCT'),
     maxSingleBuyerPct: pnum('MAX_SINGLE_BUYER_PCT'),
     maxBundledBuyers: pnum('MAX_BUNDLED_BUYERS'),
     minPriceChangePct: pnum('MIN_PRICE_CHANGE_PCT'),

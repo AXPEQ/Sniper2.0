@@ -129,12 +129,11 @@ export class TokenFilter {
   private checkAndRememberName(ev: CreateEvent): boolean {
     const now = Date.now();
     const windowMs = this.cfg.duplicateWindowMinutes * 60_000;
-    const keys = [`n:${ev.name.trim().toLowerCase()}`, `s:${ev.symbol.trim().toLowerCase()}`];
-    const duplicate = keys.some((k) => {
-      const seen = this.recentNames.get(k);
-      return seen !== undefined && now - seen < windowMs;
-    });
-    for (const k of keys) this.recentNames.set(k, now);
+    // Только по имени: одинаковые тикеры (CAT, AI…) у разных монет — обычное дело, копии же повторяют имя.
+    const key = ev.name.trim().toLowerCase().replace(/\s+/g, ' ');
+    const seen = this.recentNames.get(key);
+    const duplicate = seen !== undefined && now - seen < windowMs;
+    this.recentNames.set(key, now);
     if (this.recentNames.size > 20_000) {
       for (const [k, t] of this.recentNames) if (now - t >= windowMs) this.recentNames.delete(k);
     }

@@ -65,6 +65,7 @@ describe('TradeTracker', () => {
     expect(s.sellVolumeSol).toBeCloseTo(0.4);
     expect(s.largestBuyerPct).toBeCloseTo(50);
     expect(s.devSold).toBe(true);
+    expect(s.devSoldPct).toBeCloseTo(33.3, 1); // купил 30, продал 10
     expect(s.devTokens).toBe(20n);
     expect(s.top10Tokens).toBe(60n); // dev 20 + 20 + 20
     expect(s.virtualTokenReserves).toBe(1_040_000_000_000_000n);
@@ -80,6 +81,7 @@ const good: ActivityStats = {
   buyVolumeSol: 5,
   sellVolumeSol: 1,
   devSold: false,
+  devSoldPct: 0,
   largestBuyerPct: 15,
   baselinePrice: 1,
   devTokens: 0n,
@@ -93,7 +95,7 @@ describe('checkActivity (strict)', () => {
     expect(checkActivity(good, 1.5, strict)).toBeNull();
   });
   it.each([
-    [{ devSold: true }, 1.5, 'разработчик'],
+    [{ devSold: true, devSoldPct: 80 }, 1.5, 'разработчик сливает'],
     [{ uniqueBuyers: 3 }, 1.5, 'мало покупателей'],
     [{ buyVolumeSol: 0.5 }, 1.5, 'малый объём'],
     [{ sellVolumeSol: 4 }, 1.5, 'много продаж'],
@@ -102,6 +104,9 @@ describe('checkActivity (strict)', () => {
     [{}, 3, 'уже вырос'],
   ] as const)('rejects %o at price %s', (patch, price, reason) => {
     expect(checkActivity({ ...good, ...patch }, price, strict)).toContain(reason);
+  });
+  it('tolerates a partial dev take-profit', () => {
+    expect(checkActivity({ ...good, devSold: true, devSoldPct: 30 }, 1.5, strict)).toBeNull();
   });
   it('normal preset does not check activity', () => {
     const normal = loadConfig({ FILTER_PRESET: 'normal' });

@@ -182,7 +182,8 @@ export class Sniper {
 
   private hasCapacity(): boolean {
     if (this.positions.openCount + this.pendingBuys >= this.cfg.maxOpenPositions) return false;
-    if (this.cfg.maxTotalSpentSol > 0 && this.spentSol + this.cfg.buyAmountSol > this.cfg.maxTotalSpentSol) {
+    // Бюджет защищает реальные деньги; в бумажном режиме ограничивает виртуальный баланс.
+    if (this.executor.mode === 'live' && this.cfg.maxTotalSpentSol > 0 && this.spentSol + this.cfg.buyAmountSol > this.cfg.maxTotalSpentSol) {
       if (!this.budgetWarned) {
         this.budgetWarned = true;
         log.warn(`бюджет ${this.cfg.maxTotalSpentSol} SOL исчерпан (MAX_TOTAL_SPENT_SOL) — новые покупки остановлены`);

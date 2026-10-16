@@ -49,6 +49,7 @@ const healthy: ActivityStats = {
   buyVolumeSol: 6,
   sellVolumeSol: 1,
   devSold: false,
+  devSoldPct: 0,
   largestBuyerPct: 15,
   baselinePrice: 30_000_000_000 / 1_073_000_000_000_000,
   devTokens: 10_000_000_000_000n, // 1%

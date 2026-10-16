@@ -13,6 +13,8 @@ export interface ActivityStats {
   buyVolumeSol: number;
   sellVolumeSol: number;
   devSold: boolean;
+  /** Какую долю купленного разработчик уже продал, % (0 — не продавал). */
+  devSoldPct: number;
   /** Доля крупнейшего покупателя в объёме покупок, %. */
   largestBuyerPct: number;
   /** Цена сразу после транзакции создания (с учётом dev-покупки), lamports за raw-токен. */
@@ -36,6 +38,8 @@ interface Watched {
   buyVolume: bigint;
   sellVolume: bigint;
   devSold: boolean;
+  devBought: bigint;
+  devSoldTokens: bigint;
   vSol: bigint;
   vTok: bigint;
 }
@@ -59,6 +63,8 @@ export class TradeTracker {
       buyVolume: 0n,
       sellVolume: 0n,
       devSold: false,
+      devBought: 0n,
+      devSoldTokens: 0n,
       vSol: opts.initialVSol,
       vTok: opts.initialVTok,
     });
@@ -82,7 +88,11 @@ export class TradeTracker {
     // dev-покупка в транзакции создания задаёт базовую цену
     if (signature === w.creationSignature) w.baselinePrice = price(trade.virtualSolReserves, trade.virtualTokenReserves);
     if (isDev) {
-      if (!trade.isBuy) w.devSold = true;
+      if (trade.isBuy) w.devBought += trade.tokenAmount;
+      else {
+        w.devSold = true;
+        w.devSoldTokens += trade.tokenAmount;
+      }
       return;
     }
     w.trades++;
@@ -111,6 +121,7 @@ export class TradeTracker {
       buyVolumeSol: lamportsToSol(w.buyVolume),
       sellVolumeSol: lamportsToSol(w.sellVolume),
       devSold: w.devSold,
+      devSoldPct: !w.devSold ? 0 : w.devBought > 0n ? Math.min(100, (Number(w.devSoldTokens) / Number(w.devBought)) * 100) : 100,
       largestBuyerPct: w.buyVolume > 0n ? (Number(largest) / Number(w.buyVolume)) * 100 : 0,
       baselinePrice: w.baselinePrice,
       devTokens,
@@ -123,12 +134,13 @@ export class TradeTracker {
 
 type ActivityRules = Pick<
   Config,
-  'minUniqueBuyers' | 'minBuyVolumeSol' | 'maxSellRatio' | 'rejectDevSell' | 'maxSingleBuyerPct' | 'minPriceChangePct' | 'maxPriceChangePct'
+  'minUniqueBuyers' | 'minBuyVolumeSol' | 'maxSellRatio' | 'maxDevSoldPct' | 'maxSingleBuyerPct' | 'minPriceChangePct' | 'maxPriceChangePct'
 >;
 
 /** Проверка активности торгов. currentPrice — текущая цена кривой (lamports за raw-токен). */
 export function checkActivity(s: ActivityStats, currentPrice: number, rules: ActivityRules): string | null {
-  if (rules.rejectDevSell && s.devSold) return 'разработчик продаёт';
+  // Частичная фиксация прибыли разработчиком — обычное дело; слив большей части — красный флаг.
+  if (s.devSold && s.devSoldPct > rules.maxDevSoldPct) return `разработчик сливает: продал ${s.devSoldPct.toFixed(0)}%`;
   if (s.uniqueBuyers < rules.minUniqueBuyers) return `мало покупателей: ${s.uniqueBuyers} < ${rules.minUniqueBuyers}`;
   if (s.buyVolumeSol < rules.minBuyVolumeSol) {
     return `малый объём покупок: ${s.buyVolumeSol.toFixed(2)} < ${rules.minBuyVolumeSol} SOL`;

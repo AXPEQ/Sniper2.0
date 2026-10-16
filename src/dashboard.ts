@@ -75,7 +75,7 @@ export function renderBanner(cfg: Config, mode: { paper?: PaperWallet; address?:
         ...(cfg.maxSellRatio > 0 ? [`продажи ≤ ${cfg.maxSellRatio * 100}%`] : []),
         ...(cfg.maxSingleBuyerPct > 0 ? [`один кошелёк ≤ ${cfg.maxSingleBuyerPct}%`] : []),
         ...(cfg.maxBundledBuyers >= 0 ? [`бандл ≤ ${cfg.maxBundledBuyers}`] : []),
-        ...(cfg.rejectDevSell ? ['dev не продаёт'] : []),
+        ...(cfg.maxDevSoldPct < 100 ? [`dev продал ≤ ${cfg.maxDevSoldPct}%`] : []),
       ].join(dot),
     );
   }
@@ -93,7 +93,11 @@ export function renderBanner(cfg: Config, mode: { paper?: PaperWallet; address?:
     row('Режим', modeLine),
     row('RPC', rpcLabel(cfg.rpcUrl)),
     row('Подписки', streamLabel(cfg.wsUrl)),
-    row('Вход', `${sol(cfg.buyAmountSol, 2)} на сделку${dot}до ${cfg.maxOpenPositions} позиций${dot}бюджет ${sol(cfg.maxTotalSpentSol, 2)}`),
+    row(
+      'Вход',
+      `${sol(cfg.buyAmountSol, 2)} на сделку${dot}до ${cfg.maxOpenPositions} позиций` +
+        (mode.paper ? '' : `${dot}бюджет ${cfg.maxTotalSpentSol > 0 ? sol(cfg.maxTotalSpentSol, 2) : 'без лимита'}`),
+    ),
     row('Выход', exit),
     ...filters.map((f, i) => row(i === 0 ? 'Фильтры' : '', f)),
   ]);
