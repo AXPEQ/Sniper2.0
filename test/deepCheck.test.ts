@@ -51,6 +51,8 @@ const healthy: ActivityStats = {
   devSold: false,
   devSoldPct: 0,
   largestBuyerPct: 15,
+  netFlowSol: 4,
+  lateBuyers: 5,
   baselinePrice: 30_000_000_000 / 1_073_000_000_000_000,
   devTokens: 10_000_000_000_000n, // 1%
   top10Tokens: 150_000_000_000_000n, // 15%

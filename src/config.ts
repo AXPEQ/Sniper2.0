@@ -71,6 +71,14 @@ export interface Config {
   maxBundledBuyers: number;
   minPriceChangePct: number;
   maxPriceChangePct: number;
+  /** Мин. чистый приток (покупки − продажи) за окно, SOL. */
+  minNetFlowSol: number;
+  /** Мин. новых покупателей во второй половине окна. */
+  minLateBuyers: number;
+  /** Макс. запусков этого же создателя за последний час (серийные запуски — фабрика скама). 0 — не проверять. */
+  maxCreatorLaunches: number;
+  /** Хосты метаданных (сервисы запуска), которые всегда пропускать. */
+  uriHostBlacklist: string[];
 
   // Бумажная торговля (DRY_RUN=true)
   paperBalanceSol: number;
@@ -102,6 +110,9 @@ const PRESETS: Record<FilterPreset, Record<string, number | boolean>> = {
     MAX_BUNDLED_BUYERS: -1,
     MIN_PRICE_CHANGE_PCT: -100,
     MAX_PRICE_CHANGE_PCT: 0,
+    MIN_NET_FLOW_SOL: -1000,
+    MIN_LATE_BUYERS: 0,
+    MAX_CREATOR_LAUNCHES: 0,
   },
   strict: {
     BUY_DELAY_MS: 6000,
@@ -120,6 +131,9 @@ const PRESETS: Record<FilterPreset, Record<string, number | boolean>> = {
     MAX_BUNDLED_BUYERS: 3,
     MIN_PRICE_CHANGE_PCT: 0,
     MAX_PRICE_CHANGE_PCT: 150,
+    MIN_NET_FLOW_SOL: -1000,
+    MIN_LATE_BUYERS: 0,
+    MAX_CREATOR_LAUNCHES: 0,
   },
 };
 
@@ -225,6 +239,10 @@ export function loadConfig(env: Env = process.env): Config {
     maxBundledBuyers: pnum('MAX_BUNDLED_BUYERS'),
     minPriceChangePct: pnum('MIN_PRICE_CHANGE_PCT'),
     maxPriceChangePct: pnum('MAX_PRICE_CHANGE_PCT'),
+    minNetFlowSol: pnum('MIN_NET_FLOW_SOL'),
+    minLateBuyers: pnum('MIN_LATE_BUYERS'),
+    maxCreatorLaunches: pnum('MAX_CREATOR_LAUNCHES'),
+    uriHostBlacklist: list(env, 'URI_HOST_BLACKLIST').map((s) => s.toLowerCase()),
 
     paperBalanceSol: num(env, 'PAPER_BALANCE_SOL', 5),
     paperStatePath: str(env, 'PAPER_STATE_PATH', 'data/paper-wallet.json')!,

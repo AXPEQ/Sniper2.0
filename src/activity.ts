@@ -17,6 +17,10 @@ export interface ActivityStats {
   devSoldPct: number;
   /** Доля крупнейшего покупателя в объёме покупок, %. */
   largestBuyerPct: number;
+  /** Чистый приток: покупки − продажи (без разработчика), SOL. */
+  netFlowSol: number;
+  /** Новые покупатели во второй половине окна наблюдения (интерес растёт, а не только снайперы на старте). */
+  lateBuyers: number;
   /** Цена сразу после транзакции создания (с учётом dev-покупки), lamports за raw-токен. */
   baselinePrice: number;
   /** Сколько токенов (raw) держат разработчики по данным сделок. */
@@ -29,6 +33,9 @@ export interface ActivityStats {
 }
 
 interface Watched {
+  startedAt: number;
+  windowMs: number;
+  lateBuyers: number;
   creationSignature: string;
   devs: Set<string>;
   baselinePrice: number;
@@ -52,8 +59,14 @@ export class TradeTracker {
 
   isWatched = (mint: string): boolean => this.watched.has(mint);
 
-  watch(mint: PublicKey, opts: { creationSignature: string; devs: PublicKey[]; initialVSol: bigint; initialVTok: bigint }): void {
+  watch(
+    mint: PublicKey,
+    opts: { creationSignature: string; devs: PublicKey[]; initialVSol: bigint; initialVTok: bigint; windowMs?: number; now?: number },
+  ): void {
     this.watched.set(mint.toBase58(), {
+      startedAt: opts.now ?? Date.now(),
+      windowMs: opts.windowMs ?? 0,
+      lateBuyers: 0,
       creationSignature: opts.creationSignature,
       devs: new Set(opts.devs.map((d) => d.toBase58())),
       baselinePrice: price(opts.initialVSol, opts.initialVTok),
@@ -74,7 +87,7 @@ export class TradeTracker {
     this.watched.delete(mint.toBase58());
   }
 
-  onTrade(trade: TradeEvent, signature: string): void {
+  onTrade(trade: TradeEvent, signature: string, now = Date.now()): void {
     const w = this.watched.get(trade.mint.toBase58());
     if (!w) return;
     const user = trade.user.toBase58();
@@ -98,6 +111,7 @@ export class TradeTracker {
     w.trades++;
     if (trade.isBuy) {
       w.buyVolume += trade.solAmount;
+      if (!w.buyers.has(user) && w.windowMs > 0 && now - w.startedAt >= w.windowMs / 2) w.lateBuyers++;
       w.buyers.set(user, (w.buyers.get(user) ?? 0n) + trade.solAmount);
     } else {
       w.sellVolume += trade.solAmount;
@@ -123,6 +137,8 @@ export class TradeTracker {
       devSold: w.devSold,
       devSoldPct: !w.devSold ? 0 : w.devBought > 0n ? Math.min(100, (Number(w.devSoldTokens) / Number(w.devBought)) * 100) : 100,
       largestBuyerPct: w.buyVolume > 0n ? (Number(largest) / Number(w.buyVolume)) * 100 : 0,
+      netFlowSol: lamportsToSol(w.buyVolume - w.sellVolume),
+      lateBuyers: w.lateBuyers,
       baselinePrice: w.baselinePrice,
       devTokens,
       top10Tokens,
@@ -134,7 +150,15 @@ export class TradeTracker {
 
 type ActivityRules = Pick<
   Config,
-  'minUniqueBuyers' | 'minBuyVolumeSol' | 'maxSellRatio' | 'maxDevSoldPct' | 'maxSingleBuyerPct' | 'minPriceChangePct' | 'maxPriceChangePct'
+  | 'minUniqueBuyers'
+  | 'minBuyVolumeSol'
+  | 'maxSellRatio'
+  | 'maxDevSoldPct'
+  | 'maxSingleBuyerPct'
+  | 'minPriceChangePct'
+  | 'maxPriceChangePct'
+  | 'minNetFlowSol'
+  | 'minLateBuyers'
 >;
 
 /** Проверка активности торгов. currentPrice — текущая цена кривой (lamports за raw-токен). */
@@ -145,6 +169,8 @@ export function checkActivity(s: ActivityStats, currentPrice: number, rules: Act
   if (s.buyVolumeSol < rules.minBuyVolumeSol) {
     return `малый объём покупок: ${s.buyVolumeSol.toFixed(2)} < ${rules.minBuyVolumeSol} SOL`;
   }
+  if (s.netFlowSol < rules.minNetFlowSol) return `слабый приток: ${s.netFlowSol.toFixed(2)} SOL`;
+  if (s.lateBuyers < rules.minLateBuyers) return `интерес угасает: ${s.lateBuyers} новых покупателей во 2-й половине окна`;
   if (rules.maxSellRatio > 0 && s.buyVolumeSol > 0 && s.sellVolumeSol / s.buyVolumeSol > rules.maxSellRatio) {
     return `много продаж: ${((s.sellVolumeSol / s.buyVolumeSol) * 100).toFixed(0)}% от покупок`;
   }

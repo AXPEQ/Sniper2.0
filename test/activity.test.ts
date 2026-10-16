@@ -51,6 +51,18 @@ describe('TradeTracker', () => {
     expect(s.virtualSolReserves).toBe(32_000_000_000n);
   });
 
+  it('counts buyers that first appear in the second half of the window', () => {
+    const t = new TradeTracker();
+    t.watch(mint, { creationSignature: 'create', devs: [dev], initialVSol: VSOL, initialVTok: VTOK, windowMs: 6000, now: 0 });
+    t.onTrade(trade(wallets[0]), 'a', 1000);
+    t.onTrade(trade(wallets[0]), 'b', 4000); // уже покупал — не новый
+    t.onTrade(trade(wallets[1]), 'c', 3500);
+    t.onTrade(trade(wallets[2], false), 'd', 5000); // продажа — не считается
+    const s = t.stats(mint)!;
+    expect(s.lateBuyers).toBe(1);
+    expect(s.netFlowSol).toBeCloseTo(1.0);
+  });
+
   it('aggregates buyers, volume, sells, holders and dev sells', () => {
     const t = tracker();
     t.onTrade(trade(dev, true, 1_000_000_000n, 30n), 'create');
@@ -83,6 +95,8 @@ const good: ActivityStats = {
   devSold: false,
   devSoldPct: 0,
   largestBuyerPct: 15,
+  netFlowSol: 4,
+  lateBuyers: 5,
   baselinePrice: 1,
   devTokens: 0n,
   top10Tokens: 0n,
@@ -104,6 +118,12 @@ describe('checkActivity (strict)', () => {
     [{}, 3, 'уже вырос'],
   ] as const)('rejects %o at price %s', (patch, price, reason) => {
     expect(checkActivity({ ...good, ...patch }, price, strict)).toContain(reason);
+  });
+  it('applies net flow and late buyer thresholds when enabled', () => {
+    const rules = { ...strict, minNetFlowSol: 1, minLateBuyers: 3 };
+    expect(checkActivity(good, 1.5, rules)).toBeNull();
+    expect(checkActivity({ ...good, netFlowSol: 0.2 }, 1.5, rules)).toContain('слабый приток');
+    expect(checkActivity({ ...good, lateBuyers: 1 }, 1.5, rules)).toContain('интерес угасает');
   });
   it('tolerates a partial dev take-profit', () => {
     expect(checkActivity({ ...good, devSold: true, devSoldPct: 30 }, 1.5, strict)).toBeNull();

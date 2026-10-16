@@ -29,6 +29,8 @@ const DANGEROUS_EXTENSIONS = new Set([
 
 export class TokenFilter {
   private readonly recentNames = new Map<string, number>();
+  /** Время запусков по создателю — для фильтра серийных запусков. */
+  private readonly launches = new Map<string, number[]>();
 
   constructor(
     private readonly connection: Connection,
@@ -38,6 +40,7 @@ export class TokenFilter {
   /** Быстрые проверки только по данным события, без сети. Возвращает причину отказа или null. */
   quickCheck(ev: CreateEvent): string | null {
     const isDuplicate = this.checkAndRememberName(ev);
+    const prevLaunches = this.countAndRememberLaunch(ev);
     const text = `${ev.name} ${ev.symbol}`.toLowerCase();
 
     if (this.cfg.skipMayhem && ev.isMayhemMode) return 'mayhem mode';
@@ -50,7 +53,31 @@ export class TokenFilter {
       return 'нет слов из NAME_WHITELIST';
     }
     if (this.cfg.skipDuplicateNames && isDuplicate) return 'копия чужого имени';
+    if (this.cfg.maxCreatorLaunches > 0 && prevLaunches >= this.cfg.maxCreatorLaunches) {
+      return `серийный создатель: ${prevLaunches + 1}-й запуск за час`;
+    }
+    if (this.cfg.uriHostBlacklist.length > 0) {
+      const host = uriHost(ev.uri);
+      if (host && this.cfg.uriHostBlacklist.some((h) => host === h || host.endsWith(`.${h}`))) return `лаунчер в чёрном списке: ${host}`;
+    }
     return null;
+  }
+
+  /** Сколько раз этот создатель запускал токены за последний час (до текущего запуска). */
+  private countAndRememberLaunch(ev: CreateEvent): number {
+    const now = Date.now();
+    const keys = [ev.user.toBase58(), ...(ev.creator && !ev.creator.equals(ev.user) ? [ev.creator.toBase58()] : [])];
+    let prev = 0;
+    for (const k of keys) {
+      const recent = (this.launches.get(k) ?? []).filter((t) => now - t < 3_600_000);
+      prev = Math.max(prev, recent.length);
+      recent.push(now);
+      this.launches.set(k, recent);
+    }
+    if (this.launches.size > 50_000) {
+      for (const [k, ts] of this.launches) if (now - ts[ts.length - 1]! >= 3_600_000) this.launches.delete(k);
+    }
+    return prev;
   }
 
   /** Нужно ли грузить метаданные при текущих настройках. */
@@ -166,6 +193,14 @@ export function curveFromStream(ev: CreateEvent, a: ActivityStats | null): Bondi
     tokenTotalSupply: ev.tokenTotalSupply ?? DEFAULT_SUPPLY,
     complete: false,
   };
+}
+
+export function uriHost(uri: string): string | null {
+  try {
+    return new URL(uri).host.toLowerCase();
+  } catch {
+    return null;
+  }
 }
 
 export function checkMetadata(

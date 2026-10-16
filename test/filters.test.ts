@@ -38,6 +38,18 @@ describe('quickCheck', () => {
     expect(f.quickCheck(event(' pepe  2 ', 'OTHER'))).toContain('копия');
     expect(f.quickCheck(event('Different', 'PEPE2'))).toBeNull();
   });
+  it('rejects serial creators when enabled', () => {
+    const user = Keypair.generate().publicKey;
+    const f = makeFilter({ MAX_CREATOR_LAUNCHES: '2', SKIP_DUPLICATE_NAMES: 'false' });
+    expect(f.quickCheck(event('A1', 'A1', { user }))).toBeNull();
+    expect(f.quickCheck(event('A2', 'A2', { user }))).toBeNull();
+    expect(f.quickCheck(event('A3', 'A3', { user }))).toContain('серийный создатель');
+  });
+  it('rejects blacklisted launcher hosts', () => {
+    const f = makeFilter({ URI_HOST_BLACKLIST: 'bad.io' });
+    expect(f.quickCheck(event('X', 'X', { uri: 'https://meta.bad.io/x.json' }))).toContain('лаунчер');
+    expect(f.quickCheck(event('Y', 'Y', { uri: 'https://ipfs.io/ipfs/abc' }))).toBeNull();
+  });
   it('rejects blacklisted creators', () => {
     const user = Keypair.generate().publicKey;
     const f = makeFilter({ CREATOR_BLACKLIST: user.toBase58() });

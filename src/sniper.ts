@@ -93,6 +93,8 @@ export class Sniper {
       devs: event.creator ? [event.user, event.creator] : [event.user],
       initialVSol: event.virtualSolReserves ?? 30_000_000_000n,
       initialVTok: event.virtualTokenReserves ?? 1_073_000_000_000_000n,
+      windowMs: this.cfg.buyDelayMs,
+      now: token.detectedAt,
     });
     // Подписка на сделки токена — только на время окна наблюдения.
     if (this.cfg.buyDelayMs > 0) this.listener.watchTrades(event.bondingCurve);
