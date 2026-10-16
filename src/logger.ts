@@ -1,3 +1,4 @@
+import { appendToLogFile } from './logfile.js';
 import { c } from './ui.js';
 
 type Level = 'debug' | 'info' | 'warn' | 'error';
@@ -29,17 +30,20 @@ function format(level: Level, msg: string): string {
 
 function write(level: Level, msg: string, extra?: unknown): void {
   if (ORDER[level] < ORDER[minLevel]) return;
-  const ts = new Date().toTimeString().slice(0, 8);
-  const tail = extra === undefined ? '' : ' ' + (extra instanceof Error ? extra.message : JSON.stringify(extra));
-  const line = `${c.gray(ts)}  ${format(level, msg + tail)}`;
+  const line = stamp(format(level, msg + (extra === undefined ? '' : ' ' + (extra instanceof Error ? extra.message : JSON.stringify(extra)))));
   (level === 'error' || level === 'warn' ? stderr : stdout)(line);
+  appendToLogFile(line);
 }
+
+const stamp = (text: string): string => `${c.gray(new Date().toTimeString().slice(0, 8))}  ${text}`;
 
 export const log = {
   debug: (msg: string, extra?: unknown) => write('debug', msg, extra),
   info: (msg: string, extra?: unknown) => write('info', msg, extra),
   warn: (msg: string, extra?: unknown) => write('warn', msg, extra),
   error: (msg: string, extra?: unknown) => write('error', msg, extra),
+  /** Только в файл лога, не в консоль (например, отсеянные токены). */
+  file: (msg: string) => appendToLogFile(stamp(msg)),
 };
 
 /** Сколько раз обрывалось WebSocket-соединение (показывается в статусе). */

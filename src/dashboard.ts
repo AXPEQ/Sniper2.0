@@ -1,4 +1,5 @@
 import type { Config } from './config.js';
+import { currentLogFile } from './logfile.js';
 import { wsStats } from './logger.js';
 import { redactUrl } from './config.js';
 import type { PositionManager } from './positions.js';
@@ -100,6 +101,7 @@ export function renderBanner(cfg: Config, mode: { paper?: PaperWallet; address?:
     ),
     row('Выход', exit),
     ...filters.map((f, i) => row(i === 0 ? 'Фильтры' : '', f)),
+    row('Сохраняю', c.gray(`сделки → ${cfg.journalPath}${currentLogFile() ? ` · лог → ${currentLogFile()}` : ''}`)),
   ]);
 }
 

@@ -51,8 +51,9 @@ export class Sniper {
 
   private logReject(event: NewToken['event'], reason: string): void {
     const line = c.gray(`✗ ${event.symbol.padEnd(10).slice(0, 10)} ${reason}`);
+    // В консоль — только по SHOW_REJECTED, в файл лога — всегда (пригодится для разбора фильтров).
     if (this.cfg.showRejected) log.info(line);
-    else log.debug(line);
+    else log.file(line);
   }
 
   /** Прекратить новые покупки и дождаться завершения уже отправленных (не дольше timeoutMs). */

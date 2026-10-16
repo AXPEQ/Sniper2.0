@@ -1,3 +1,5 @@
+import { appendToLogFile } from './logfile.js';
+
 /** Оформление консоли: цвета, эмодзи, рамки. Цвета отключаются через NO_COLOR или при выводе не в терминал. */
 
 const useColor = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
@@ -58,4 +60,5 @@ export const row = (label: string, value: string, width = 10): string => `${c.gr
 
 export function print(text: string): void {
   console.log(text);
+  appendToLogFile(text);
 }

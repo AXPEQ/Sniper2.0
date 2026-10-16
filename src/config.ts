@@ -12,6 +12,8 @@ export interface Config {
   logLevel: string;
   /** Печатать каждый отсеянный токен (по умолчанию только сводка раз в минуту). */
   showRejected: boolean;
+  /** Папка для файлов лога; null — не писать логи в файл. */
+  logDir: string | null;
   journalPath: string;
 
   // Покупка
@@ -173,6 +175,7 @@ export function loadConfig(env: Env = process.env): Config {
     dryRun: bool(env, 'DRY_RUN', true),
     logLevel: str(env, 'LOG_LEVEL', 'info')!,
     showRejected: bool(env, 'SHOW_REJECTED', false),
+    logDir: bool(env, 'LOG_TO_FILE', true) ? str(env, 'LOG_DIR', 'data/logs')! : null,
     journalPath: str(env, 'JOURNAL_PATH', 'data/trades.jsonl')!,
 
     buyAmountSol: num(env, 'BUY_AMOUNT_SOL', 0.05),
