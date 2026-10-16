@@ -13,7 +13,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "report": "tsx src/report.ts"
+    "report": "tsx src/report.ts",
+    "update": "sh scripts/update.sh"
   },
   "dependencies": {
     "@solana/web3.js": "^1.98.4",
