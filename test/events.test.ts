@@ -10,6 +10,13 @@ const MAYHEM =
 const TRADE =
   'vdt/007mYe4sKk/yNH5d9nmm2eoMTfs5gYn4Rh1NYEn5D2QYSJhxj2HRvHUAAAAAozFzWEk8AAABie2PKdVScRq4L/jhpL0jkBMeJD5/P74+irPPj20jbs6rFdJqAAAAAGF94HEHAAAAXd5k75mTAwBh0bx1AAAAAF1GUqMIlQIASsL40N1cvJfjKJwZfLUGKlTz2Va5zm5RFfllZ6pcs+ZfAAAAAAAAAHlWHgEAAAAArcgNcbyPXZkMAzjXMzjW2/qouYA8yA3/JyKoWOlq/AQeAAAAAAAAACZsWgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAGJ1eV9leGFjdF9zb2xfaW4AAAAAAAAAAAAAAAAAAAAAAIgTAAAAAAAAPCuPAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABh0bx1AAAAAGF94HEHAAAAYdG8dQAAAAAeAAAAAAAAACZsWgAAAAAAAAAAAAAAAAA=';
 
+/** Оборачивает строки в вызов программы pump.fun, как в настоящих логах. */
+const inPump = (...lines: string[]) => [
+  'Program 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P invoke [1]',
+  ...lines,
+  'Program 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P success',
+];
+
 describe('CreateEvent', () => {
   it('has the anchor discriminator pump.fun emits', () => {
     expect([...CREATE_EVENT_DISCRIMINATOR]).toEqual([27, 114, 169, 77, 222, 235, 99, 118]);
@@ -76,9 +83,25 @@ describe('TradeEvent', () => {
   });
 
   it('returns trades of tokens created in the same tx even if not watched', () => {
-    const logs = [`Program data: ${NORMAL}`, `Program data: ${TRADE}`];
+    const logs = inPump(`Program data: ${NORMAL}`, `Program data: ${TRADE}`);
     expect(parseProgramEvents(logs, () => false).map((e) => e.kind)).toEqual(['create', 'trade']);
-    expect(parseProgramEvents([`Program data: ${TRADE}`], () => false)).toEqual([]);
-    expect(parseProgramEvents([`Program data: ${TRADE}`], (m) => m.endsWith('pump'))).toHaveLength(1);
+    expect(parseProgramEvents(inPump(`Program data: ${TRADE}`), () => false)).toEqual([]);
+    expect(parseProgramEvents(inPump(`Program data: ${TRADE}`), (m) => m.endsWith('pump'))).toHaveLength(1);
+  });
+
+  it('ignores events printed by other programs (spoofing)', () => {
+    const spoof = [
+      'Program Evi1111111111111111111111111111111111111111 invoke [1]',
+      `Program data: ${NORMAL}`,
+      'Program Evi1111111111111111111111111111111111111111 success',
+    ];
+    expect(extractCreateEvents(spoof)).toEqual([]);
+    // событие после возврата из вложенного вызова снова принадлежит pump.fun
+    const nested = inPump(
+      'Program 11111111111111111111111111111111 invoke [2]',
+      'Program 11111111111111111111111111111111 success',
+      `Program data: ${NORMAL}`,
+    );
+    expect(extractCreateEvents(nested)).toHaveLength(1);
   });
 });

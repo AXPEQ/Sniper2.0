@@ -4,6 +4,7 @@ import type { Journal } from './journal.js';
 import { log } from './logger.js';
 import { decodeBondingCurve, quoteSell, type BondingCurveState } from './pump/bondingCurve.js';
 import type { Executor } from './trader/types.js';
+import { c, duration, pctChange, signedPct, signedSol, sol, ticker } from './ui.js';
 import { errorMessage, lamportsToSol } from './utils.js';
 
 export type ExitReason = 'take_profit' | 'stop_loss' | 'trailing_stop' | 'timeout' | 'migrated' | 'shutdown';
@@ -54,24 +55,35 @@ export function evaluateExit(
 }
 
 const REASON_RU: Record<ExitReason, string> = {
-  take_profit: 'тейк-профит',
-  stop_loss: 'стоп-лосс',
-  trailing_stop: 'трейлинг-стоп',
-  timeout: 'таймаут удержания',
-  migrated: 'миграция в AMM',
-  shutdown: 'остановка бота',
+  take_profit: '🎯 тейк-профит',
+  stop_loss: '🛑 стоп-лосс',
+  trailing_stop: '📉 трейлинг-стоп',
+  timeout: '⏰ время вышло',
+  migrated: '🚀 миграция',
+  shutdown: '👋 остановка бота',
 };
 
+export interface PositionSnapshot {
+  symbol: string;
+  costSol: number;
+  valueSol: number;
+  pnlPct: number;
+  ageSeconds: number;
+  selling: boolean;
+}
+
 /**
- * Следит за открытыми позициями: получает обновления кривой по WebSocket (accountSubscribe)
- * и дополнительно опрашивает RPC раз в PRICE_POLL_MS, считает PnL и продаёт по правилам.
+ * Следит за открытыми позициями: получает обновления кривой по WebSocket (accountSubscribe),
+ * раз в секунду локально проверяет условия выхода, а RPC опрашивает лишь раз в PRICE_POLL_MS.
  */
 export class PositionManager {
   private readonly positions = new Map<string, Position>();
   private timer: NodeJS.Timeout | null = null;
+  private evalTimer: NodeJS.Timeout | null = null;
   private ticking = false;
   realizedPnlSol = 0;
   closedCount = 0;
+  winCount = 0;
 
   constructor(
     private readonly connection: Connection,
@@ -82,6 +94,19 @@ export class PositionManager {
 
   get openCount(): number {
     return this.positions.size;
+  }
+
+  /** Открытые позиции с текущей оценкой — для статуса в консоли. */
+  snapshot(): PositionSnapshot[] {
+    const now = Date.now();
+    return [...this.positions.values()].map((p) => ({
+      symbol: p.symbol,
+      costSol: p.costSol,
+      valueSol: p.lastValueSol,
+      pnlPct: pctChange(p.costSol, p.lastValueSol),
+      ageSeconds: (now - p.openedAt) / 1000,
+      selling: p.status === 'selling',
+    }));
   }
 
   has(mint: PublicKey): boolean {
@@ -108,12 +133,20 @@ export class PositionManager {
   }
 
   start(): void {
+    // Цена приходит по подписке; RPC-опрос — редкая страховка (каждый запрос стоит кредит).
     this.timer = setInterval(() => void this.tick(), this.cfg.pricePollMs);
+    // Таймауты и повторы продаж проверяем локально, без запросов к RPC.
+    this.evalTimer = setInterval(() => {
+      const now = Date.now();
+      for (const pos of this.positions.values()) this.evaluate(pos, now);
+    }, 1_000);
   }
 
   stop(): void {
     if (this.timer) clearInterval(this.timer);
+    if (this.evalTimer) clearInterval(this.evalTimer);
     this.timer = null;
+    this.evalTimer = null;
     for (const pos of this.positions.values()) this.unsubscribe(pos);
   }
 
@@ -169,7 +202,7 @@ export class PositionManager {
     pos.lastValueSol = value;
     pos.peakValueSol = Math.max(pos.peakValueSol, value);
     const reason = evaluateExit(pos, value, now, this.cfg);
-    log.debug(`${pos.symbol}: стоимость ${value.toFixed(4)} SOL (${pnlPct(pos.costSol, value)})`);
+    log.debug(`${pos.symbol}: стоимость ${value.toFixed(4)} SOL (${pctChange(pos.costSol, value).toFixed(1)}%)`);
     if (reason) void this.sell(pos, reason);
   }
 
@@ -185,16 +218,20 @@ export class PositionManager {
     pos.status = 'selling';
     pos.exitReason = reason;
     pos.sellAttempts++;
-    log.info(`ПРОДАЖА ${pos.symbol} — ${REASON_RU[reason]}, оценка ${pos.lastValueSol.toFixed(4)} SOL (${pnlPct(pos.costSol, pos.lastValueSol)})`);
+    log.debug(`продаю ${pos.symbol}: ${REASON_RU[reason]}, оценка ${sol(pos.lastValueSol)}`);
     try {
       const res = await this.executor.sell(pos.mint, pos.tokenAmount, pos.lastCurve);
       const pnl = res.solReceived - pos.costSol;
       this.realizedPnlSol += pnl;
       this.closedCount++;
+      if (pnl > 0) this.winCount++;
       this.positions.delete(pos.mint.toBase58());
       this.unsubscribe(pos);
+      const head = pnl > 0 ? `🤑 ${c.green(c.bold('ПРОФИТ '))}` : `😢 ${c.red(c.bold('УБЫТОК '))}`;
+      const held = duration((Date.now() - pos.openedAt) / 1000);
       log.info(
-        `ЗАКРЫТО ${pos.symbol}: получено ${res.solReceived.toFixed(4)} SOL, PnL ${pnl >= 0 ? '+' : ''}${pnl.toFixed(4)} SOL (${pnlPct(pos.costSol, res.solReceived)}) tx=${res.signature}`,
+        `${head} ${ticker(pos.symbol)} ${signedSol(pnl)} ${c.gray('(')}${signedPct(pctChange(pos.costSol, res.solReceived))}${c.gray(')')}  ` +
+          `${REASON_RU[reason]} ${c.gray(`· держал ${held} · ${sol(pos.costSol)} → ${sol(res.solReceived)}`)}`,
       );
       this.journal.write({
         type: 'sell',
@@ -212,12 +249,8 @@ export class PositionManager {
       const backoffMs = Math.min(30_000, 2_000 * pos.sellAttempts);
       pos.status = 'open';
       pos.nextSellAt = Date.now() + backoffMs;
-      log.error(`Продажа ${pos.symbol} не удалась (попытка ${pos.sellAttempts}), повтор через ${backoffMs / 1000}с: ${errorMessage(err)}`);
+      log.warn(`продажа ${pos.symbol} не прошла (попытка ${pos.sellAttempts}), повтор через ${backoffMs / 1000}с: ${errorMessage(err)}`);
     }
   }
 }
 
-function pnlPct(cost: number, value: number): string {
-  const p = (value / cost - 1) * 100;
-  return `${p >= 0 ? '+' : ''}${p.toFixed(1)}%`;
-}

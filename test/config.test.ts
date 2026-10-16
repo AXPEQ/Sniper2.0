@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { loadConfig, redactUrl } from '../src/config.js';
+import { costWarnings, loadConfig, redactUrl } from '../src/config.js';
 
 describe('loadConfig', () => {
   it('defaults to dry run', () => {
@@ -29,9 +29,15 @@ describe('loadConfig', () => {
   it('builds Helius urls from HELIUS_API_KEY and redacts them', () => {
     const cfg = loadConfig({ HELIUS_API_KEY: 'k123' });
     expect(cfg.rpcUrl).toBe('https://mainnet.helius-rpc.com/?api-key=k123');
-    expect(cfg.wsUrl).toBe('wss://mainnet.helius-rpc.com/?api-key=k123');
+    // подписки по умолчанию — через бесплатный публичный WebSocket, а не Helius
+    expect(cfg.wsUrl).toBe('wss://api.mainnet-beta.solana.com');
+    expect(loadConfig({ HELIUS_API_KEY: 'k', STREAM_WS_URL: 'wss://x' }).wsUrl).toBe('wss://x');
     expect(redactUrl(cfg.rpcUrl)).toBe('https://mainnet.helius-rpc.com/?api-key=***');
     expect(loadConfig({ HELIUS_API_KEY: 'k', RPC_URL: 'https://my.rpc' }).rpcUrl).toBe('https://my.rpc');
   });
+  it('warns about settings that burn RPC credits', () => {
+    expect(costWarnings(loadConfig({}))).toEqual([]);
+    expect(costWarnings(loadConfig({ PRICE_POLL_MS: '2000' }))[0]).toContain('PRICE_POLL_MS=2000');
+    expect(costWarnings(loadConfig({ STREAM_WS_URL: 'wss://mainnet.helius-rpc.com/?api-key=k' }))[0]).toContain('Helius WebSocket');
+  });
 });
-

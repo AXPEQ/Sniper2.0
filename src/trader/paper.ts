@@ -50,15 +50,8 @@ export class PaperWallet {
     return this.state.balanceSol;
   }
 
-  summary(): string {
-    const s = this.state;
-    const pnl = s.balanceSol - s.startBalanceSol;
-    const winRate = s.sells > 0 ? ((s.wins / s.sells) * 100).toFixed(0) : '—';
-    return (
-      `виртуальный баланс ${s.balanceSol.toFixed(4)} SOL (старт ${s.startBalanceSol} SOL, ` +
-      `${pnl >= 0 ? '+' : ''}${pnl.toFixed(4)} SOL, ${((pnl / s.startBalanceSol) * 100).toFixed(1)}%) | ` +
-      `покупок ${s.buys}, продаж ${s.sells}, в плюс ${winRate}%, неудачных транзакций ${s.failedTxs}`
-    );
+  get stats(): Readonly<PaperWalletState> {
+    return this.state;
   }
 
   debit(sol: number): void {

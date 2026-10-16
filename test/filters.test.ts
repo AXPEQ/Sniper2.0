@@ -35,8 +35,8 @@ describe('quickCheck', () => {
   it('rejects copycats by name or symbol', () => {
     const f = makeFilter();
     expect(f.quickCheck(event('Pepe 2', 'PEPE2'))).toBeNull();
-    expect(f.quickCheck(event('pepe 2', 'OTHER'))).toContain('дубликат');
-    expect(f.quickCheck(event('Different', 'PEPE2'))).toContain('дубликат');
+    expect(f.quickCheck(event('pepe 2', 'OTHER'))).toContain('копия');
+    expect(f.quickCheck(event('Different', 'PEPE2'))).toContain('копия');
   });
   it('rejects blacklisted creators', () => {
     const user = Keypair.generate().publicKey;

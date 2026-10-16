@@ -27,6 +27,9 @@ const anchorEventDiscriminator = (name: string): Buffer =>
 export const CREATE_EVENT_DISCRIMINATOR = anchorEventDiscriminator('CreateEvent');
 
 const PROGRAM_DATA_PREFIX = 'Program data: ';
+const PUMP_PROGRAM = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P';
+const INVOKE_RE = /^Program (\w+) invoke \[\d+\]$/;
+const RETURN_RE = /^Program \w+ (success|failed)/;
 
 class Reader {
   private offset = 0;
@@ -138,8 +141,20 @@ export type ProgramEvent = { kind: 'create'; event: CreateEvent } | { kind: 'tra
 export function parseProgramEvents(logs: readonly string[], isTradeWanted: (mint: string) => boolean = () => true): ProgramEvent[] {
   const out: ProgramEvent[] = [];
   const createdHere = new Set<string>();
+  // Стек вызовов: "Program data:" принадлежит программе на вершине стека. Принимаем только события
+  // самой программы pump.fun — чужая программа может напечатать в лог поддельный CreateEvent.
+  const stack: string[] = [];
   for (const line of logs) {
-    if (!line.startsWith(PROGRAM_DATA_PREFIX)) continue;
+    const invoke = INVOKE_RE.exec(line);
+    if (invoke) {
+      stack.push(invoke[1]!);
+      continue;
+    }
+    if (RETURN_RE.test(line)) {
+      stack.pop();
+      continue;
+    }
+    if (!line.startsWith(PROGRAM_DATA_PREFIX) || stack[stack.length - 1] !== PUMP_PROGRAM) continue;
     const data = Buffer.from(line.slice(PROGRAM_DATA_PREFIX.length), 'base64');
     if (data.length < 8) continue;
     const disc = data.subarray(0, 8);

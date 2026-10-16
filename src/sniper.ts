@@ -3,11 +3,12 @@ import type { TradeTracker } from './activity.js';
 import type { Config } from './config.js';
 import type { TokenFilter } from './filters/index.js';
 import type { Journal } from './journal.js';
-import type { NewToken } from './listener.js';
+import type { NewToken, TokenListener } from './listener.js';
 import { log } from './logger.js';
 import type { PositionManager } from './positions.js';
 import { marketCapSol } from './pump/bondingCurve.js';
 import type { Executor } from './trader/types.js';
+import { c, pumpLink, sol, ticker } from './ui.js';
 import { errorMessage, lamportsToSol, sleep } from './utils.js';
 
 /** Связывает всё вместе: новый токен → фильтры → покупка → позиция под управлением TP/SL. */
@@ -30,20 +31,28 @@ export class Sniper {
     private readonly journal: Journal,
     private readonly wallet: PublicKey | null,
     private readonly tracker: TradeTracker,
+    private readonly listener: Pick<TokenListener, 'watchTrades' | 'unwatchTrades'>,
   ) {}
 
-  /** Топ причин отказа, например «мало покупателей: # < #» — 120. */
-  topRejectReasons(limit = 5): string {
+  /** Топ причин отказа, например «мало покупателей 120 · копия чужого имени 80». */
+  topRejectReasons(limit = 4): string {
     return [...this.rejectReasons.entries()]
       .sort((a, b) => b[1] - a[1])
       .slice(0, limit)
-      .map(([r, n]) => `${r} — ${n}`)
-      .join('; ');
+      .map(([r, n]) => `${r} ${c.bold(n)}`)
+      .join(c.gray(' · '));
   }
 
+  /** Категория — часть причины до двоеточия, без чисел. */
   private countReject(reason: string): void {
-    const key = reason.replace(/-?\d+(\.\d+)?/g, '#');
+    const key = reason.split(':')[0]!.replace(/-?\d+(\.\d+)?/g, '#').trim();
     this.rejectReasons.set(key, (this.rejectReasons.get(key) ?? 0) + 1);
+  }
+
+  private logReject(event: NewToken['event'], reason: string): void {
+    const line = c.gray(`✗ ${event.symbol.padEnd(10).slice(0, 10)} ${reason}`);
+    if (this.cfg.showRejected) log.info(line);
+    else log.debug(line);
   }
 
   /** Прекратить новые покупки и дождаться завершения уже отправленных (не дольше timeoutMs). */
@@ -63,7 +72,7 @@ export class Sniper {
     if (quickReason) {
       this.stats.quickRejected++;
       this.countReject(quickReason);
-      log.debug(`пропуск ${label}: ${quickReason}`);
+      this.logReject(event, quickReason);
       return;
     }
     if (!this.hasCapacity()) {
@@ -77,37 +86,44 @@ export class Sniper {
     }
 
     this.inFlight++;
-    if (this.cfg.buyDelayMs > 0) {
-      this.tracker.watch(event.mint, {
-        creationSignature: token.signature,
-        creationSlot: token.slot,
-        devs: event.creator ? [event.user, event.creator] : [event.user],
-        initialVSol: event.virtualSolReserves ?? 30_000_000_000n,
-        initialVTok: event.virtualTokenReserves ?? 1_073_000_000_000_000n,
-      });
-    }
-    void this.process(token, label).finally(() => {
+    // Наблюдаем всегда: dev-покупка из транзакции создания нужна и без окна наблюдения.
+    this.tracker.watch(event.mint, {
+      creationSignature: token.signature,
+      devs: event.creator ? [event.user, event.creator] : [event.user],
+      initialVSol: event.virtualSolReserves ?? 30_000_000_000n,
+      initialVTok: event.virtualTokenReserves ?? 1_073_000_000_000_000n,
+    });
+    // Подписка на сделки токена — только на время окна наблюдения.
+    if (this.cfg.buyDelayMs > 0) this.listener.watchTrades(event.bondingCurve);
+    void this.process(token).finally(() => {
       this.inFlight--;
+      this.listener.unwatchTrades(event.bondingCurve);
       this.tracker.unwatch(event.mint);
     });
   }
 
-  private async process(token: NewToken, label: string): Promise<void> {
+  private async process(token: NewToken): Promise<void> {
     const { event } = token;
     // Метаданные грузим сразу, параллельно с окном наблюдения.
     const metadata = this.filter.fetchMetadata(event);
-    if (this.cfg.buyDelayMs > 0) await sleep(this.cfg.buyDelayMs);
+    // Даже при нулевом окне уступаем ход: сделки из транзакции создания разбираются сразу после onToken.
+    await sleep(this.cfg.buyDelayMs);
 
     let check;
     try {
-      check = await this.filter.deepCheck(event, this.tracker.stats(event.mint), metadata);
+      check = await this.filter.deepCheck(event, {
+        activity: this.tracker.stats(event.mint),
+        metadata,
+        creationSignature: token.signature,
+        creationSlot: token.slot,
+      });
     } catch (err) {
       check = { reason: `ошибка проверки: ${errorMessage(err)}` };
     }
     if (check.reason || !check.curve) {
       this.stats.deepRejected++;
       this.countReject(check.reason ?? 'нет данных кривой');
-      log.info(`✗ ${label}: ${check.reason ?? 'нет данных кривой'}`);
+      this.logReject(event, check.reason ?? 'нет данных кривой');
       return;
     }
     // Пока шли проверки, бот мог остановиться или слоты могли закончиться.
@@ -120,8 +136,12 @@ export class Sniper {
     const curve = check.curve;
     const latencyMs = Date.now() - token.detectedAt;
     const a = this.tracker.stats(event.mint);
-    const activity = a ? `, покупателей ${a.uniqueBuyers}, объём ${a.buyVolumeSol.toFixed(2)} SOL` : '';
-    log.info(`✓ ${label}: фильтры пройдены за ${latencyMs}мс, mcap ${marketCapSol(curve).toFixed(1)} SOL${activity} — ПОКУПКА ${this.cfg.buyAmountSol} SOL`);
+    const details = [
+      `mcap ${marketCapSol(curve).toFixed(1)} SOL`,
+      ...(a && this.cfg.buyDelayMs > 0 ? [`👥 ${a.uniqueBuyers} покупателей`, `объём ${a.buyVolumeSol.toFixed(2)} SOL`] : []),
+      `проверка ${(latencyMs / 1000).toFixed(1)}с`,
+    ].join(c.gray(' · '));
+    log.info(`🎯 ${c.cyan('НАШЁЛ ')} ${ticker(event.symbol)} ${c.gray(event.name.slice(0, 30))}  ${details}`);
 
     this.pendingBuys++;
     try {
@@ -138,7 +158,7 @@ export class Sniper {
         openedAt: Date.now(),
         lastCurve: curve,
       });
-      log.info(`КУПЛЕНО ${event.symbol}: ${res.tokenAmount} токенов (raw) за ${res.solSpent.toFixed(4)} SOL tx=${res.signature}`);
+      log.info(`🛒 ${c.cyan(c.bold('КУПИЛ  '))} ${ticker(event.symbol)} за ${c.bold(sol(res.solSpent))}  ${pumpLink(event.mint.toBase58())}`);
       this.journal.write({
         type: 'buy',
         mode: this.executor.mode,
@@ -154,7 +174,7 @@ export class Sniper {
       });
     } catch (err) {
       this.stats.buyFailed++;
-      log.error(`Покупка ${event.symbol} не удалась: ${errorMessage(err)}`);
+      log.warn(`покупка ${event.symbol} не прошла: ${errorMessage(err)}`);
     } finally {
       this.pendingBuys--;
     }
@@ -165,7 +185,7 @@ export class Sniper {
     if (this.cfg.maxTotalSpentSol > 0 && this.spentSol + this.cfg.buyAmountSol > this.cfg.maxTotalSpentSol) {
       if (!this.budgetWarned) {
         this.budgetWarned = true;
-        log.warn(`Достигнут лимит MAX_TOTAL_SPENT_SOL=${this.cfg.maxTotalSpentSol} — новые покупки остановлены`);
+        log.warn(`бюджет ${this.cfg.maxTotalSpentSol} SOL исчерпан (MAX_TOTAL_SPENT_SOL) — новые покупки остановлены`);
       }
       return false;
     }

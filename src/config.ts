@@ -1,13 +1,17 @@
 import type { Commitment } from '@solana/web3.js';
+import { PUBLIC_WS_URL } from './constants.js';
 
 export type FilterPreset = 'strict' | 'normal';
 
 export interface Config {
   rpcUrl: string;
-  wsUrl: string | undefined;
+  /** WebSocket для подписок (создания токенов, сделки на наблюдении, цены позиций). */
+  wsUrl: string;
   privateKey: string | undefined;
   dryRun: boolean;
   logLevel: string;
+  /** Печатать каждый отсеянный токен (по умолчанию только сводка раз в минуту). */
+  showRejected: boolean;
   journalPath: string;
 
   // Покупка
@@ -51,6 +55,8 @@ export interface Config {
   maxDevHoldingPct: number;
   maxTop10HoldingPct: number;
   minDevSolBalance: number;
+  /** Проверять mint через RPC (1 кредит на финалиста). Для токенов pump.fun избыточно. */
+  checkMint: boolean;
 
   // Фильтры: активность торгов за окно наблюдения (работают при BUY_DELAY_MS > 0)
   minUniqueBuyers: number;
@@ -156,7 +162,8 @@ export function loadConfig(env: Env = process.env): Config {
   // HELIUS_API_KEY — короткий способ подключиться к Helius без ручной сборки URL.
   const heliusKey = str(env, 'HELIUS_API_KEY');
   const rpcUrl = str(env, 'RPC_URL') ?? (heliusKey ? `https://mainnet.helius-rpc.com/?api-key=${heliusKey}` : 'https://api.mainnet-beta.solana.com');
-  const wsUrl = str(env, 'WS_URL') ?? (heliusKey && !str(env, 'RPC_URL') ? `wss://mainnet.helius-rpc.com/?api-key=${heliusKey}` : undefined);
+  // Подписки по умолчанию идут через бесплатный публичный WebSocket: Helius берёт кредиты за объём потока.
+  const wsUrl = str(env, 'STREAM_WS_URL') ?? str(env, 'WS_URL') ?? PUBLIC_WS_URL;
 
   const cfg: Config = {
     rpcUrl,
@@ -164,6 +171,7 @@ export function loadConfig(env: Env = process.env): Config {
     privateKey: str(env, 'PRIVATE_KEY'),
     dryRun: bool(env, 'DRY_RUN', true),
     logLevel: str(env, 'LOG_LEVEL', 'info')!,
+    showRejected: bool(env, 'SHOW_REJECTED', false),
     journalPath: str(env, 'JOURNAL_PATH', 'data/trades.jsonl')!,
 
     buyAmountSol: num(env, 'BUY_AMOUNT_SOL', 0.05),
@@ -183,7 +191,7 @@ export function loadConfig(env: Env = process.env): Config {
     trailingStopPct: num(env, 'TRAILING_STOP_PCT', 0),
     trailingActivationPct: num(env, 'TRAILING_ACTIVATION_PCT', 30),
     maxHoldSeconds: num(env, 'MAX_HOLD_SECONDS', 300),
-    pricePollMs: num(env, 'PRICE_POLL_MS', 2000),
+    pricePollMs: num(env, 'PRICE_POLL_MS', 30_000),
     sellOnExit: bool(env, 'SELL_ON_EXIT', false),
 
     filterPreset,
@@ -203,6 +211,7 @@ export function loadConfig(env: Env = process.env): Config {
     maxDevHoldingPct: pnum('MAX_DEV_HOLDING_PCT'),
     maxTop10HoldingPct: pnum('MAX_TOP10_HOLDING_PCT'),
     minDevSolBalance: pnum('MIN_DEV_SOL_BALANCE'),
+    checkMint: bool(env, 'CHECK_MINT', false),
 
     minUniqueBuyers: pnum('MIN_UNIQUE_BUYERS'),
     minBuyVolumeSol: pnum('MIN_BUY_VOLUME_SOL'),
@@ -227,12 +236,25 @@ export function loadConfig(env: Env = process.env): Config {
   if (cfg.trailingStopPct < 0 || cfg.trailingStopPct >= 100) throw new Error('TRAILING_STOP_PCT должен быть в диапазоне [0, 100)');
   if (cfg.maxOpenPositions < 1) throw new Error('MAX_OPEN_POSITIONS должен быть >= 1');
   if (cfg.maxConcurrentChecks < 1) throw new Error('MAX_CONCURRENT_CHECKS должен быть >= 1');
-  if (cfg.pricePollMs < 250) throw new Error('PRICE_POLL_MS должен быть >= 250');
+  if (cfg.pricePollMs < 1000) throw new Error('PRICE_POLL_MS должен быть >= 1000');
   if (cfg.buyDelayMs < 0) throw new Error('BUY_DELAY_MS должен быть >= 0');
   if (cfg.paperBalanceSol <= 0) throw new Error('PAPER_BALANCE_SOL должен быть > 0');
   if (!cfg.dryRun && !cfg.privateKey) throw new Error('Для DRY_RUN=false нужен PRIVATE_KEY');
 
   return cfg;
+}
+
+/** Настройки, которые заметно жгут кредиты RPC-провайдера: предупреждаем при запуске. */
+export function costWarnings(cfg: Config): string[] {
+  const warnings: string[] = [];
+  if (cfg.pricePollMs < 10_000) {
+    const perDay = Math.round(86_400_000 / cfg.pricePollMs).toLocaleString('ru-RU');
+    warnings.push(`PRICE_POLL_MS=${cfg.pricePollMs}: до ${perDay} запросов в сутки при открытых позициях — поставьте 30000 (цена и так приходит по подписке)`);
+  }
+  if (cfg.wsUrl.includes('helius')) {
+    warnings.push('подписки идут через Helius WebSocket — это 2 кредита за 0.1 МБ; уберите STREAM_WS_URL/WS_URL, чтобы использовать бесплатный публичный');
+  }
+  return warnings;
 }
 
 /** RPC URL без API-ключа — для логов. */
